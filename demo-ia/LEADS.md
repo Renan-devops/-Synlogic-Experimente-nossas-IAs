@@ -16,7 +16,7 @@ O código de cadastro e a migração estão no GitHub. **Somente o código NÃO 
 5. Verifique que a implantação `synlogic-demo-ia` está **Ready** na branch correta.
 6. Teste com um telefone de teste sob seu controle. No console do D1, execute:
    `SELECT nome,empresa,segmento,whatsapp,consentido_em FROM synlogic_leads ORDER BY criado_em DESC LIMIT 10;`
-7. No formulário, quando salvar com sucesso, aparecerá `Dados registrados com segurança para contato comercial`. Se o D1 estiver ausente, o formulário informa claramente que não salvou e permite prosseguir à demo.
+7. No formulário, quando salvar com sucesso, aparecerá `Cadastro registrado. Sua demonstração está liberada.`. Se o D1 estiver ausente, o formulário exibe erro e **não libera o chat**. O servidor também confere um token temporário emitido apenas depois da gravação do lead.
 
 ## Dados e privacidade
 - Campos: nome, empresa, segmento e subtipo, WhatsApp, interesses, dificuldade opcional, consentimento e carimbo de data.
@@ -33,3 +33,21 @@ DELETE FROM synlogic_leads WHERE whatsapp_normalizado = '55DDDNUMERO';
 ```
 
 D1 binding no `wrangler.toml` é necessário para que o próximo deploy via Git inclua o banco. Criar apenas o binding manual na interface não é garantia de que a configuração persistirá em novos deploys gerenciados pelo Wrangler.
+
+## Conferir quantos contatos realmente foram cadastrados
+
+No Console do D1 `synlogic-demo-leads`:
+
+```sql
+SELECT COUNT(*) AS total_leads_unicos FROM synlogic_leads;
+```
+
+Para ver os leads mais recentes com WhatsApp de contato:
+
+```sql
+SELECT nome, empresa, segmento, whatsapp, interesses_json, criado_em
+FROM synlogic_leads
+ORDER BY criado_em DESC LIMIT 50;
+```
+
+Os resultados contabilizam **contatos cadastrados**, não visitantes anônimos, visualizações da página, nem a quantidade de vezes que o mesmo contato refez o cadastro. Telefones são validados por **formato** brasileiro (DDD existente + celular de nove dígitos começando em 9) e padrões claramente fictícios são recusados. **Esse processo não verifica a titularidade, o recebimento de mensagens nem a presença de WhatsApp**. Para garantir contato alcançável, implementar posteriormente verificação com código enviado por SMS ou WhatsApp, mediante consentimento, com limites de envio.
