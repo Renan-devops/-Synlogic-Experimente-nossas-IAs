@@ -107,23 +107,58 @@ function runTool(name,args,ctx){
 
 const CONTACT_CHALLENGES=new Set(['Atendimento mais ágil','Agendamentos','Lembretes','Follow-up','Organização']);
 const safeText=(x,max=120)=>typeof x==='string'?x.trim().slice(0,max):'';
+const BRAZIL_DDDS=new Set('11 12 13 14 15 16 17 18 19 21 22 24 27 28 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 49 51 53 54 55 61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83 84 85 86 87 88 89 91 92 93 94 95 96 97 98 99'.split(' '));
 const normalizedPhone=(v)=>{
- const digits=String(v??'').replace(/\\D/g,'');
- if(/^55\\d{10,11}$/.test(digits))return digits;
- if(/^\\d{10,11}$/.test(digits))return '55'+digits;
- return null;
+ if(typeof v!=='string'||v.length>35)return null;
+ let digits=v.replace(/\D/g,'');
+ if(digits.startsWith('55')&&digits.length===13)digits=digits.slice(2);
+ if(!/^\d{11}$/.test(digits))return null;
+ const ddd=digits.slice(0,2),mobile=digits.slice(2);
+ if(!BRAZIL_DDDS.has(ddd)||!/^9\d{8}$/.test(mobile))return null;
+ if(/^(\d)\1{7}$/.test(mobile.slice(1)))return null;
+ if(['12345678','87654321','23456789','98765432','00000000'].includes(mobile.slice(1)))return null;
+ return '55'+digits;
+};
+const encode64url=(bytes)=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const decode64url=(value)=>{const b64=value.replace(/-/g,'+').replace(/_/g,'/');return Uint8Array.from(atob(b64.padEnd(Math.ceil(b64.length/4)*4,'=')),x=>x.charCodeAt(0))};
+async function tokenKey(env){
+ if(!env.OPENAI_API_KEY)return null;
+ const secret=new TextEncoder().encode('synlogic-lead-session-v1:'+env.OPENAI_API_KEY);
+ const seed=await crypto.subtle.digest('SHA-256',secret);
+ return crypto.subtle.importKey('raw',seed,{name:'HMAC',hash:'SHA-256'},false,['sign','verify']);
+}
+async function issueLeadToken(id,env){
+ const key=await tokenKey(env);if(!key)return null;
+ const exp=Math.floor(Date.now()/1000)+86400;
+ const payload=id+'.'+exp;
+ const signature=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(payload));
+ return payload+'.'+encode64url(new Uint8Array(signature));
+}
+async function authorizedLeadToken(value,env){
+ if(typeof value!=='string'||value.length>300||!env.LEADS_DB)return false;
+ const parts=value.split('.');
+ if(parts.length!==3||!/^[0-9a-f-]{36}$/i.test(parts[0])||! /^\d{10}$/.test(parts[1]))return false;
+ if(Number(parts[1])<Math.floor(Date.now()/1000))return false;
+ try{
+  const key=await tokenKey(env);if(!key)return false;
+  const verified=await crypto.subtle.verify('HMAC',key,decode64url(parts[2]),new TextEncoder().encode(parts[0]+'.'+parts[1]));
+  if(!verified)return false;
+  const record=await env.LEADS_DB.prepare('SELECT id FROM synlogic_leads WHERE id=? AND consentimento=1 LIMIT 1').bind(parts[0]).first();
+  return !!record;
+ }catch{return false}
 };
 async function handleLead(request,env){
  if(!env.LEADS_DB)return J({error:'O cadastro de leads ainda não está habilitado. A demonstração pode ser usada normalmente.',saved:false},503);
  let data;try{data=await request.json()}catch{return J({error:'Dados inválidos.',saved:false},400)}
- if(data?.website||data?.honeypot)return J({saved:true},200); // honeypot silencioso
+ if(data?.website||data?.honeypot)return J({error:'Cadastro não permitido.',saved:false},400);
  if(data?.consent!==true)return J({error:'É preciso autorizar o contato comercial.',saved:false},400);
  const nome=safeText(data.name,80),empresa=safeText(data.company,100);
  const segmento=['salao','clinica','barbearia','outro'].includes(data.segment)?data.segment:'';
  const outro=safeText(data.otherSegment,90),pain=safeText(data.pain,600);
  const whatsapp=safeText(data.phone,30),phone=normalizedPhone(whatsapp);
  const interests=Array.isArray(data.challenges)?[...new Set(data.challenges.filter(c=>typeof c==='string'&&CONTACT_CHALLENGES.has(c)))].slice(0,5):[];
- if(nome.length<2||empresa.length<2||!segmento||(segmento==='outro'&&outro.length<2)||!phone)return J({error:'Confira nome, empresa, segmento e WhatsApp com DDD.',saved:false},400);
+ if(nome.length<2||empresa.length<2||!segmento||(segmento==='outro'&&outro.length<2))return J({error:'Confira seu nome, o nome da empresa e o segmento.',saved:false},400);
+ if(!phone)return J({error:'Informe um celular brasileiro válido: DDD + 9 dígitos, iniciando em 9. Não utilize sequências ou números fictícios.',saved:false},400);
  const moment=new Date().toISOString();
  const id=crypto.randomUUID();
  try{
@@ -133,13 +168,15 @@ async function handleLead(request,env){
    (id,nome,empresa,segmento,segmento_outro,whatsapp,whatsapp_normalizado,interesses_json,desafio_descrito,consentimento,consentido_em,criado_em,atualizado_em,status)
    VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,'novo')
    ON CONFLICT(whatsapp_normalizado) DO UPDATE SET
-   nome=excluded.nome,empresa=excluded.empresa,segmento=excluded.segmento,
+   id=excluded.id,nome=excluded.nome,empresa=excluded.empresa,segmento=excluded.segmento,
    segmento_outro=excluded.segmento_outro,whatsapp=excluded.whatsapp,
    interesses_json=excluded.interesses_json,desafio_descrito=excluded.desafio_descrito,
    consentimento=excluded.consentimento,consentido_em=excluded.consentido_em,atualizado_em=excluded.atualizado_em`
   ).bind(id,nome,empresa,segmento,segmento==='outro'?outro:null,whatsapp,phone,
    JSON.stringify(interests),pain||null,moment,moment,moment).run();
-  return J({saved:true},201);
+  const sessionToken=await issueLeadToken(id,env);
+  if(!sessionToken)return J({error:'Cadastro registrado, mas a demonstração ainda não pode ser liberada. Contate a equipe.',saved:false},503);
+  return J({saved:true,sessionToken},201);
  }catch(e){
   console.error('Falha técnica no cadastro D1:',e?.name||'error');
   return J({error:'Não foi possível registrar os dados agora. A demonstração continua disponível.',saved:false},503);
@@ -149,6 +186,7 @@ async function handleLead(request,env){
 async function handleChat(request,env){
  if(!env.OPENAI_API_KEY)return J({error:'A IA ainda não está conectada ao servidor. Configure OPENAI_API_KEY.'},503);
  let body;try{body=await request.json()}catch{return J({error:'JSON inválido'},400)}
+ if(!await authorizedLeadToken(body?.sessionToken,env))return J({error:'Para acessar a demonstração, conclua primeiro o cadastro com um contato válido.',saved:false},403);
  const segment=['barbearia','salao','clinica','outro'].includes(body.segment)?body.segment:'outro';
  const profile=segment==='outro'?makeOtherProfile(body.otherSegment):null;
  const cat=profile?{service:profile.services,hours:profile.hours,aliases:profile.aliases}:catalogs[segment];
