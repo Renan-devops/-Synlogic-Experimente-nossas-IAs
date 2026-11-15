@@ -1,3 +1,4 @@
+import { adminRoute } from './admin.js';
 // Synlogic: demo isolada via Cloudflare Worker, IA real e agenda virtual de teste.
 // A variável OPENAI_API_KEY deve ser um secret do Worker, nunca enviada ao navegador.
 const HEADERS = {'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'};
@@ -220,6 +221,8 @@ async function handleChat(request,env){
 export default {
  async fetch(request,env){
   const url=new URL(request.url);
+  if(url.pathname==='/painel')return Response.redirect(url.origin+'/painel.html',302);
+  if(url.pathname.startsWith('/api/admin/'))return adminRoute(request,env,url);
   if(url.pathname==='/api/leads'){
    if(request.method!=='POST')return J({error:'Método não permitido'},405);
    const origin=request.headers.get('origin');
