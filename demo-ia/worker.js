@@ -20,8 +20,8 @@ const matchService=(value,segment,cat)=>{
  const exact=cat.service.find(x=>normalizeText(x[0])===t);
  if(exact)return exact;
  if(segment==='barbearia'){
-  const hasHair=/\\b(corte|cabelo|degrade|fade|low fade|mid fade|high fade|disfarcado|disfarcado|americano|social|tesoura|pezinho|navalhado|militar)\\b/.test(t);
-  const hasBeard=/\\b(barba|barbear|barboterapia|bigode)\\b/.test(t);
+  const hasHair=/\b(corte|cabelo|degrade|fade|low fade|mid fade|high fade|disfarcado|disfarçado|americano|social|tesoura|pezinho|navalhado|militar)\b/.test(t);
+  const hasBeard=/\b(barba|barbear|barboterapia|bigode)\b/.test(t);
   if(hasHair&&hasBeard)return cat.service.find(x=>x[0]==='Corte + barba');
   if(hasHair)return cat.service.find(x=>x[0]==='Corte masculino');
   if(hasBeard)return cat.service.find(x=>x[0]==='Barba');
