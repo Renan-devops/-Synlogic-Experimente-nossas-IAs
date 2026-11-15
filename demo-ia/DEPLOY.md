@@ -31,3 +31,7 @@ Este procedimento cria um Worker totalmente separado. Não altere o projeto `ins
 No Worker, abra a URL `https://synlogic-demo-ia.<sua-conta>.workers.dev` informada pelo painel do Cloudflare. **Não substitua o domínio por um endereço presumido**; use somente a URL realmente exibida após o deploy.
 
 Quando aprovado, podemos configurar persistência dos leads, uma demo adequada ao segmento jurídico e um link no Story 07/07.
+
+## Registro de implantação
+
+- 2026-11-15: nova compilação solicitada após corrigir a branch de produção e o diretório raiz no Worker `synlogic-demo-ia`. A publicação depende do resultado no Cloudflare.
