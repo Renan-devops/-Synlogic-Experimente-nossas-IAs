@@ -104,6 +104,48 @@ function runTool(name,args,ctx){
  }
  return {erro:'Ferramenta desconhecida'};
 }
+
+const CONTACT_CHALLENGES=new Set(['Atendimento mais ágil','Agendamentos','Lembretes','Follow-up','Organização']);
+const safeText=(x,max=120)=>typeof x==='string'?x.trim().slice(0,max):'';
+const normalizedPhone=(v)=>{
+ const digits=String(v??'').replace(/\\D/g,'');
+ if(/^55\\d{10,11}$/.test(digits))return digits;
+ if(/^\\d{10,11}$/.test(digits))return '55'+digits;
+ return null;
+};
+async function handleLead(request,env){
+ if(!env.LEADS_DB)return J({error:'O cadastro de leads ainda não está habilitado. A demonstração pode ser usada normalmente.',saved:false},503);
+ let data;try{data=await request.json()}catch{return J({error:'Dados inválidos.',saved:false},400)}
+ if(data?.website||data?.honeypot)return J({saved:true},200); // honeypot silencioso
+ if(data?.consent!==true)return J({error:'É preciso autorizar o contato comercial.',saved:false},400);
+ const nome=safeText(data.name,80),empresa=safeText(data.company,100);
+ const segmento=['salao','clinica','barbearia','outro'].includes(data.segment)?data.segment:'';
+ const outro=safeText(data.otherSegment,90),pain=safeText(data.pain,600);
+ const whatsapp=safeText(data.phone,30),phone=normalizedPhone(whatsapp);
+ const interests=Array.isArray(data.challenges)?[...new Set(data.challenges.filter(c=>typeof c==='string'&&CONTACT_CHALLENGES.has(c)))].slice(0,5):[];
+ if(nome.length<2||empresa.length<2||!segmento||(segmento==='outro'&&outro.length<2)||!phone)return J({error:'Confira nome, empresa, segmento e WhatsApp com DDD.',saved:false},400);
+ const moment=new Date().toISOString();
+ const id=crypto.randomUUID();
+ try{
+  // A mesma pessoa não gera contatos duplicados ao repetir os testes. Atualizamos o interesse mais recente.
+  await env.LEADS_DB.prepare(
+   `INSERT INTO synlogic_leads
+   (id,nome,empresa,segmento,segmento_outro,whatsapp,whatsapp_normalizado,interesses_json,desafio_descrito,consentimento,consentido_em,criado_em,atualizado_em,status)
+   VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,'novo')
+   ON CONFLICT(whatsapp_normalizado) DO UPDATE SET
+   nome=excluded.nome,empresa=excluded.empresa,segmento=excluded.segmento,
+   segmento_outro=excluded.segmento_outro,whatsapp=excluded.whatsapp,
+   interesses_json=excluded.interesses_json,desafio_descrito=excluded.desafio_descrito,
+   consentimento=excluded.consentimento,consentido_em=excluded.consentido_em,atualizado_em=excluded.atualizado_em`
+  ).bind(id,nome,empresa,segmento,segmento==='outro'?outro:null,whatsapp,phone,
+   JSON.stringify(interests),pain||null,moment,moment,moment).run();
+  return J({saved:true},201);
+ }catch(e){
+  console.error('Falha técnica no cadastro D1:',e?.name||'error');
+  return J({error:'Não foi possível registrar os dados agora. A demonstração continua disponível.',saved:false},503);
+ }
+}
+
 async function handleChat(request,env){
  if(!env.OPENAI_API_KEY)return J({error:'A IA ainda não está conectada ao servidor. Configure OPENAI_API_KEY.'},503);
  let body;try{body=await request.json()}catch{return J({error:'JSON inválido'},400)}
@@ -140,6 +182,13 @@ async function handleChat(request,env){
 export default {
  async fetch(request,env){
   const url=new URL(request.url);
+  if(url.pathname==='/api/leads'){
+   if(request.method!=='POST')return J({error:'Método não permitido'},405);
+   const origin=request.headers.get('origin');
+   if(origin){let parsed;try{parsed=new URL(origin)}catch{return J({error:'Origem inválida'},403)}if(parsed.origin!==url.origin)return J({error:'Origem não autorizada'},403)}
+   if(Number(request.headers.get('content-length')||0)>10000)return J({error:'Solicitação muito grande'},413);
+   return handleLead(request,env);
+  }
   if(url.pathname==='/api/chat'){
    if(request.method!=='POST')return J({error:'Método não permitido'},405);
    const origin=request.headers.get('origin');
