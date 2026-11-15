@@ -9,3 +9,8 @@ binding = "ASSETS"
 [vars]
 OPENAI_MODEL = "gpt-4.1-mini"
 # Nunca colocar OPENAI_API_KEY aqui. Usar Wrangler Secret.
+
+[[d1_databases]]
+binding = "LEADS_DB"
+database_name = "synlogic-demo-leads"
+database_id = "a849bdbf-f382-43a2-9d41-19b7811ebece"
